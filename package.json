@@ -1,0 +1,9 @@
+{
+  "name": "tiaohe-zhi-ye",
+  "version": "1.0.0",
+  "description": "调和之夜 —— 3~6 人线上身份推理卡牌游戏",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=16" },
+  "license": "MIT"
+}
