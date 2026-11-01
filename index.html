@@ -115,7 +115,7 @@ h1,h2,h3{font-family:var(--serif);margin:0}
 .log p.new{animation:hl 1.6s}
 @keyframes hl{from{color:var(--gold)}}
 .notes{max-height:34vh;overflow:auto}
-.note{background:#2b1e22;border-left:3px solid var(--gold);padding:6px 8px;border-radius:4px;margin-bottom:6px;font-size:13px}
+.note{background:#2b1e22;border-left:3px solid var(--gold);padding:6px 8px;border-radius:4px;margin-bottom:6px;font-size:13px;white-space:pre-line}
 
 /* 弹窗 */
 .mask{position:fixed;inset:0;background:rgba(0,0,0,.65);display:grid;place-items:center;z-index:20;padding:16px}
@@ -280,7 +280,8 @@ $('#codeIn').onkeydown = e=>{ if(e.key==='Enter') $('#joinBtn').click(); };
 
 function enter(s){
   sess=s; store.set('th_s_'+s.code,s); store.set('th_last',s.code);
-  seenNote = Number(sessionStorage.getItem('th_seen_'+s.code)||0);
+  // 已读过的秘密信息编号；换了浏览器找回座位时不知道，就把旧信息都视为已读（侧栏仍可查看）
+  try{ const v = sessionStorage.getItem('th_seen_'+s.code); seenNote = v==null ? null : Number(v); }catch(e){ seenNote = null; }
   history.replaceState(null,'','?room='+s.code);
   if(es) es.close();
   es = new EventSource(`/api/events?code=${s.code}&id=${s.id}&token=${s.token}`);
@@ -291,6 +292,8 @@ function goHome(msg){ if(es) es.close(); es=null; sess=null; S=null; history.rep
   $('#home').hidden=false; $('#lobby').hidden=true; $('#game').hidden=true; $('#conn').hidden=true; closeModal(); $('#homeErr').textContent=msg||''; }
 (async()=>{ const code=urlCode||store.get('th_last'); const old=code&&store.get('th_s_'+code); if(!old) return;
   try{ enter(await api('/api/join',{code,id:old.id,token:old.token,name:store.get('th_name')})); }catch(e){ store.del('th_s_'+code); store.del('th_last'); } })();
+// 首页提示：链接里带房间号时，告诉掉线的人怎么回去
+if(urlCode) $('#homeErr').innerHTML = '<span class="muted">如果你是刷新后掉线的玩家，填写原来的名字再点「加入」，就能回到原来的座位。</span>';
 
 $('#leaveBtn').onclick = async()=>{ const s=sess; if(await act('leave')){ store.del('th_s_'+s.code); store.del('th_last'); goHome(); } };
 $('#inviteBtn').onclick = async()=>{ const link=location.origin+location.pathname+'?room='+sess.code;
@@ -481,12 +484,13 @@ function closeModal(kind){ if(kind && modalKind!==kind) return; $('#mask').hidde
 $('#mask').onclick = e=>{ if(e.target.id==='mask' && modalKind!=='note') closeModal(); };
 
 function showNotices(){
+  if(seenNote===null){ seenNote = S.notices.length ? S.notices[S.notices.length-1].n : 0; return; }
   if(modalKind) return;
   const fresh = S.notices.filter(n=>n.n>seenNote);
   if(!fresh.length) return;
   const n = fresh[0];
-  openModal(`<h2>只有你能看到</h2><p style="font-size:16px">${esc(n.text)}</p><p style="text-align:right;margin:14px 0 0"><button class="red" id="okNote">知道了</button></p>`,'note');
-  $('#okNote').onclick=()=>{ seenNote=n.n; sessionStorage.setItem('th_seen_'+S.code,seenNote); closeModal(); showNotices(); };
+  openModal(`<h2>只有你能看到</h2><p style="font-size:16px;white-space:pre-line">${esc(n.text)}</p><p style="text-align:right;margin:14px 0 0"><button class="red" id="okNote">知道了</button></p>`,'note');
+  $('#okNote').onclick=()=>{ seenNote=n.n; try{ sessionStorage.setItem('th_seen_'+S.code,seenNote); }catch(e){} closeModal(); showNotices(); };
 }
 
 let resultShownFor=null;
@@ -500,7 +504,7 @@ function showResult(force){
     <p><b>判定 1 · 调和值：</b>调和区 ${res.pile.length} 张，总和 <b>${res.sum}</b> / 目标 ${res.target} →
       ${res.success?'<span class="win">调和成功</span>':'<span style="color:var(--blood2);font-weight:700">调和失败</span>'}</p>
     <div class="minis" style="margin:-4px 0 10px">${res.pile.map(r=>mini(r)).join('')||'<span class="muted small">（调和区没有牌）</span>'}</div>
-    <p><b>判定 2 · 监禁：</b>质疑牌数值总和最高的人被监禁。</p>
+    <p><b>判定 2 · 监禁：</b>质疑牌数值总和最高（且大于 0）的人被监禁。${res.rows.some(r=>r.imprisoned)?'':'<span class="muted">本局没有人被监禁。</span>'}</p>
     <p><b>判定 3 · 胜利条件：</b>按优先顺序 1→5 检查，最先满足条件的一方获胜。</p>
     <div class="verdict">${esc(res.reason)}</div>
     <table><tr><th>玩家</th><th>最后的身份</th><th>收到的质疑牌</th><th>嫌疑值</th><th>监禁</th><th>结果</th></tr>
@@ -521,10 +525,10 @@ function showRules(){
   · <b>调和</b>：反面朝上放入调和区，数值计入调和值。<br>
   · <b>质疑</b>：反面朝上放在你怀疑的玩家面前，数值计入 TA 的嫌疑值（不能质疑自己）。</p>
   <p><b>最后一张：</b>手牌只剩 1 张时，回合会被跳过，但仍可以被质疑。标准模式下这张牌被锁定，不能被移动；浑沌模式下仍可能被交换或抽走。手中最后那张牌就是你的真实身份和胜利条件。</p>
-  <p><b>结束：</b>所有人都只剩 1 张手牌时进入判定。① 调和区数值总和达到目标值（3人9 / 4人8 / 5人7 / 6人6）即调和成功；② 面前质疑牌数值总和最高的人被监禁；③ 按优先顺序 1→5 检查胜利条件，最先满足的一方获胜，后面的都算失败。</p>
+  <p><b>结束：</b>所有人都只剩 1 张手牌时进入判定。① 调和区数值总和达到目标值（3人9 / 4人8 / 5人7 / 6人6）即调和成功；② 面前质疑牌数值总和最高、且大于 0 的人被监禁；③ 按优先顺序 1→5 检查胜利条件，最先满足的一方获胜，后面的都算失败。</p>
   <table><tr><th>数值</th><th>角色</th><th>优先</th><th>胜利条件</th><th>能力</th></tr>
   ${ORDER.map(k=>{const r=R[k];return `<tr><td>${r.v}</td><td>${mini(k)}</td><td>${r.p}</td><td>${r.w}</td><td class="small">${esc(r.a)}</td></tr>`;}).join('')}</table>
-  <p class="muted small" style="margin-top:10px">线上版补充约定：嫌疑值并列最高时，并列的人都被监禁；面前没有质疑牌的人不会被监禁。同一优先等级满足条件的人一起获胜（例如犯人获胜时共犯也获胜，调和成功时所有学生一起获胜）。</p>
+  <p class="muted small" style="margin-top:10px">线上版补充约定：嫌疑值并列最高时，并列的人都被监禁；嫌疑值为 0 或负数（例如只收到外星人）的人不会被监禁，所有人都不大于 0 时本局没有人被监禁。同一优先等级满足条件的人一起获胜（例如犯人获胜时共犯也获胜，调和成功时所有学生一起获胜）。</p>
   <p style="text-align:right;margin:0"><button class="red" id="closeRules">关闭</button></p>`,'rules');
   $('#closeRules').onclick=()=>{ closeModal(); if(S && S.phase!=='lobby'){ showNotices(); if(S.phase==='end') showResult(); } };
 }

@@ -200,8 +200,14 @@ function skill(room, p, role, card, a) {
     }
 
     case 'librarian': {
-      const list = room.pile.map((c, i) => `${i + 1}.【${nameOf(room, c)}】`).join(' ');
-      notify(p, room, room.pile.length ? `【图书委员】调和区的牌（按放置顺序）：${list}` : '【图书委员】调和区目前没有牌。');
+      const val = c => ROLES[room.cards[c]].value;
+      const list = room.pile.map((c, i) => `${i + 1}.【${nameOf(room, c)}】${val(c)}`).join('　');
+      const sum = room.pile.reduce((s, c) => s + val(c), 0);
+      const gap = room.target - sum;
+      const status = gap > 0 ? `还差 ${gap} 就能调和成功` : `已经达到目标，现在结算的话调和成功`;
+      notify(p, room, room.pile.length
+        ? `【图书委员】调和区共 ${room.pile.length} 张（按放置顺序）：\n${list}\n目前调和值 ${sum} / 目标 ${room.target}，${status}。`
+        : `【图书委员】调和区目前没有牌。目前调和值 0 / 目标 ${room.target}，还差 ${room.target} 就能调和成功。`);
       log(room, `${p.name} 正面打出【图书委员】，查看了调和区的所有牌。`);
       return;
     }
@@ -346,9 +352,9 @@ function endGame(room) {
     accused: p.accused.map(x => room.cards[x.card]),
     accSum: p.accused.reduce((s, x) => s + val(x.card), 0),
   }));
-  const withAcc = rows.filter(r => r.accused.length);
-  const max = withAcc.length ? Math.max(...withAcc.map(r => r.accSum)) : null;
-  rows.forEach(r => { r.imprisoned = r.accused.length > 0 && r.accSum === max; });
+  // 嫌疑值必须大于 0 且为全场最高才会被监禁；全场最高不大于 0 时没有人被监禁
+  const max = Math.max(0, ...rows.map(r => r.accSum));
+  rows.forEach(r => { r.imprisoned = max > 0 && r.accSum === max; });
 
   const has = role => rows.filter(r => r.role === role);
   let winners = [], level = 0, reason = '';
@@ -496,7 +502,16 @@ const server = http.createServer(async (req, res) => {
       if (!room) return json(res, 404, { error: '房间不存在或已过期' });
       const back = room.players.find(x => x.id === b.id && x.token === b.token);
       if (back) return json(res, 200, { code: room.code, id: back.id, token: back.token });
-      if (room.phase !== 'lobby') return json(res, 409, { error: '这个房间的游戏已经开始了' });
+      if (room.phase !== 'lobby') {
+        // 游戏已开始：用原来的名字找回座位（浏览器丢失了登录信息时使用），优先匹配掉线的人
+        const nm = cleanName(b.name);
+        const seat = room.players.find(x => x.name === nm && !x.clients.size) || room.players.find(x => x.name === nm);
+        if (seat) return json(res, 200, { code: room.code, id: seat.id, token: seat.token });
+        const off = room.players.filter(x => !x.clients.size).map(x => `「${x.name}」`);
+        return json(res, 409, { error: off.length
+          ? `游戏已经开始了。如果你是掉线的玩家，请填写你原来的名字再点加入：${off.join('、')}`
+          : '这个房间的游戏已经开始了' });
+      }
       if (room.players.length >= 6) return json(res, 409, { error: '房间已满（最多 6 人）' });
       const p = newPlayer(b.name);
       room.players.push(p);
@@ -525,4 +540,4 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 if (require.main === module) server.listen(PORT, () => console.log(`调和之夜已启动： http://localhost:${PORT}`));
-module.exports = { server, rooms, ROLES };
+module.exports = { server, rooms, ROLES, endGame };
